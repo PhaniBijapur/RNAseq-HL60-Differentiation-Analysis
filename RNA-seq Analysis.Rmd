@@ -1,0 +1,125 @@
+---
+title: "Analysis of Illumina HiSeq 2000 RNA-Seq Data"
+author: "Phaniraj Bijapur"
+date: "July 2024"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    highlight: tango
+---
+
+# Introduction
+
+This project analyzes the transcriptomic differences between granulocytic and macrophage-differentiated forms of HL-60/S4 cells using RNA-Seq data from the Illumina HiSeq 2000 platform.
+
+**Data Source:** [NCBI BioProject PRJNA303179](https://www.ncbi.nlm.nih.gov/bioproject/303179)
+
+**Objective:** Identify key gene expression changes associated with differentiation upon treatment with retinoic acid (RA) or phorbol ester (TPA).
+
+# Methods Overview
+
+1. Data download from SRA (SRA Toolkit)
+2. Conversion of SRA to FASTQ files
+3. Transcript quantification using Salmon
+4. Importing data into R
+5. Statistical analysis using edgeR and DESeq2
+6. Visualization and enrichment analysis
+
+# Required Packages
+
+```{r setup, message=FALSE, warning=FALSE}
+library(tximport)
+library(EnsDb.Hsapiens.v86)
+library(DESeq2)
+library(edgeR)
+library(limma)
+library(GO.db)
+library(org.Hs.eg.db)
+library(VennDiagram)
+library(MKinfer)
+library(vsn)
+```
+
+# Workflow Summary
+
+## Data Download and Preprocessing
+- Used `fastq-dump` from SRA Toolkit to download and split paired-end reads.
+- Built Salmon index from GENCODE v34 transcripts and GRCh38 genome.
+- Quantified transcript-level expression using Salmon.
+
+## Data Import into R
+
+```{r}
+Samples <- read.csv("Samples.csv")
+Samples$Group <- factor(Samples$Group, levels = c("untreated", "TPA", "RA"))
+load("txi.RData")
+```
+
+## Quality Control
+
+```{r}
+cts <- txi$counts
+cts0 <- cts
+cts0[cts0 == 0] <- min(cts0[cts0 != 0])
+boxplot(cts0, log = "y", range = 0, las = 2)
+```
+
+## Correlation Analysis
+
+```{r}
+Cor <- cor(cts, method = "spearman")
+corPlot(Cor, minCor = 0.86, labels = Samples$Run, title = "Spearman Correlation Heatmap")
+```
+
+# Statistical Analysis
+
+## edgeR Differential Expression
+
+```{r}
+y <- DGEList(cts)
+design <- model.matrix(~Samples$Group)
+keep <- filterByExpr(y, design)
+y <- y[keep,]
+y <- calcNormFactors(y)
+y <- estimateDisp(y, design)
+fit <- glmFit(y, design)
+lrt.TPA.vs.untr <- glmLRT(fit, coef = 2)
+```
+
+## DESeq2 Differential Expression
+
+```{r}
+dds <- DESeqDataSetFromTximport(txi, colData = Samples, design = ~ Group)
+dds <- dds[rowSums(counts(dds)) >= 10,]
+dds <- DESeq(dds)
+res.TPA.vs.untr <- results(dds, contrast = c("Group", "TPA", "untreated"))
+```
+
+# Visualization
+
+## Volcano Plots
+
+```{r}
+volcano(res.TPA.vs.untr$log2FoldChange, res.TPA.vs.untr$padj, title = "Volcano Plot: TPA vs Untreated")
+```
+
+# Gene Ontology and KEGG Pathway Enrichment
+
+```{r}
+GeneID <- mapIds(org.Hs.eg.db, keys = rownames(res.TPA.vs.untr), keytype = "ENSEMBL", column = "ENTREZID")
+EG.DE.UP <- GeneID[(res.TPA.vs.untr$padj < 0.05) & (res.TPA.vs.untr$log2FoldChange > 0)]
+EG.DE.DN <- GeneID[(res.TPA.vs.untr$padj < 0.05) & (res.TPA.vs.untr$log2FoldChange < 0)]
+go <- goana(list(Up = EG.DE.UP, Down = EG.DE.DN), universe = GeneID, species = "Hs")
+topGO(go, sort = "up")
+```
+
+# Conclusion
+
+This analysis identified substantial transcriptomic changes between untreated, RA-treated, and TPA-treated HL-60/S4 cells. Key findings were validated across two statistical models (edgeR and DESeq2), and enrichment analysis revealed critical pathways involved in cell differentiation and immune function.
+
+---
+
+**Author:** Phaniraj Bijapur  
+**GitHub Repo:** [Link to your repository]
